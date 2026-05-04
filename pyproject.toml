@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coverage_plots"
+version = "0.1.0"
+description = "Coverage plots for posterior sampling in inverse problems."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [
+    { name = "Aleph Group" },
+]
+dependencies = [
+    "torch>=1.13",
+    "numpy>=1.22",
+    "deepinv>=0.2",
+]
+
+[project.optional-dependencies]
+csv = ["pandas>=1.5"]
+example = [
+    "pandas>=1.5",
+    "matplotlib>=3.6",
+    "torchvision>=0.14",
+]
+dev = [
+    "pytest>=7",
+    "ruff>=0.1",
+]
+
+[project.urls]
+Repository = "https://github.com/aleph-group/coverage_plots"
+
+[tool.setuptools.packages.find]
+include = ["coverage_plots*"]
+exclude = ["example*", "tests*"]
