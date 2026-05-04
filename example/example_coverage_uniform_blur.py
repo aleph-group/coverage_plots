@@ -1,12 +1,6 @@
 """
 Coverage plot for an MNIST uniform-deblurring problem solved with PnP-ULA.
 
-This script reproduces the forward model, reconstruction model and PnP-ULA
-hyperparameters of the historical reference script in
-``dev/tutorials/example_online_stats-coverage_plot_PR.py`` (the configuration
-that produced a clean coverage curve with little compute), while delegating
-posterior sampling to the modern :func:`deepinv.sampling.sampling_builder`
-and the coverage accumulation to :class:`coverage_plots.Coverage`.
 
 Forward model
     * 28x28 grayscale MNIST (no resize, no channel replication).
@@ -53,10 +47,14 @@ from coverage_plots import Coverage, load_mnist_vae_embedding
 # -----------------------------------------------------------------------------
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 IMG_SIZE = 28  # native MNIST resolution, matching the reference script
-NUM_IMAGES = 8  # reference images N
-NUM_SAMPLES = 20  # posterior samples per image S (kept from the ULA chain)
+NUM_IMAGES = 100 if torch.cuda.is_available() else 10  # reference images N
+NUM_SAMPLES = (
+    1000 if torch.cuda.is_available() else 100
+)  # posterior samples per image S (kept from the ULA chain)
 NOISE_LEVEL = 0.02  # measurement noise std (matches reference)
 KERNEL_SIZE = 5  # uniform PSF support (matches reference)
+NUM_ALPHAS = 200  # number of coverage levels evaluated in [0, 1]
+SEED = 0
 # ULA hyperparameters (matches reference; reduced max_iter for CPU runtime).
 ULA_ALPHA = 2.0
 ULA_SIGMA_DEN = NOISE_LEVEL
@@ -64,8 +62,6 @@ ULA_THINNING = 5
 ULA_BURNIN = 0.1
 ULA_CLIP = (-1.0, 2.0)
 ULA_KEPT_SAMPLES_TARGET = 1000  # post-burn-in, post-thinning samples we aim for
-NUM_ALPHAS = 200  # number of coverage levels evaluated in [0, 1]
-SEED = 0
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VAE_WEIGHTS = REPO_ROOT / "models" / "MNIST_VAE.pth.tar"
@@ -121,18 +117,18 @@ def build_sampler(physics, x_for_norm, num_samples):
     norm = physics.compute_norm(x_for_norm).detach().cpu().item()
     step_size = 1.0 / (norm / NOISE_LEVEL**2 + ULA_ALPHA * norm / ULA_SIGMA_DEN**2)
 
-    # Reference: max_iter = MC * thinning / (1 - burnin)
+    # Reference: max_iter = MC * thinning / (1 - burnin), with MC the number
+    # of post-burn-in thinned samples we want the chain to produce. Only the
+    # last ``num_samples`` of those are kept in ``history_size``.
     max_iter = int(
         max(num_samples, ULA_KEPT_SAMPLES_TARGET) * ULA_THINNING / (1.0 - ULA_BURNIN)
     )
-    # Shrink thinning if we cannot afford the requested kept samples.
-    kept = max(1, int((1.0 - ULA_BURNIN) * max_iter))
-    thinning = max(1, kept // num_samples)
+    thinning = ULA_THINNING
+    kept = int((1.0 - ULA_BURNIN) * max_iter / thinning)
 
     print(
         f"  ULA: norm={norm:.3f}, step_size={step_size:.3e}, "
-        f"max_iter={max_iter}, thinning={thinning}, "
-        f"kept~={(1 - ULA_BURNIN) * max_iter / thinning:.0f}"
+        f"max_iter={max_iter}, thinning={thinning}, kept~={kept}"
     )
 
     params = {
@@ -140,6 +136,10 @@ def build_sampler(physics, x_for_norm, num_samples):
         "alpha": ULA_ALPHA,
         "sigma": ULA_SIGMA_DEN,
     }
+    # ``history_size`` must span the full post-burn-in thinned chain so that
+    # the ``num_samples`` returned by ``sample_posterior`` cover the whole
+    # mixing window (uniform subsampling), not just the last ``num_samples``
+    # consecutive states (which would be highly correlated).
     return dinv.sampling.sampling_builder(
         "ULA",
         prior=prior,
@@ -149,7 +149,7 @@ def build_sampler(physics, x_for_norm, num_samples):
         thinning=thinning,
         burnin_ratio=ULA_BURNIN,
         clip=ULA_CLIP,
-        history_size=num_samples,
+        history_size=kept,
         verbose=False,
     )
 
@@ -159,8 +159,8 @@ def sample_posterior(sampler, y, physics, num_samples):
     Draw ``num_samples`` posterior samples per measurement from a single ULA chain.
 
     Each batch element runs an independent ULA chain in parallel. After the
-    chain finishes, the last ``num_samples`` thinned states stored in the
-    history are returned.
+    chain finishes, ``num_samples`` thinned states are picked uniformly
+    across the full post-burn-in history so they are well-decorrelated.
 
     :returns: ``(N, S, C, H, W)`` tensor on CPU.
     """
@@ -171,7 +171,8 @@ def sample_posterior(sampler, y, physics, num_samples):
             f"ULA chain returned {len(chain)} states but {num_samples} were requested. "
             "Increase ULA_KEPT_SAMPLES_TARGET."
         )
-    samples = [state["x"].detach().cpu() for state in chain[-num_samples:]]
+    idx = np.linspace(0, len(chain) - 1, num_samples, dtype=int)
+    samples = [chain[i]["x"].detach().cpu() for i in idx]
     return torch.stack(samples, dim=1)  # (N, S, C, H, W)
 
 
@@ -291,7 +292,7 @@ def main():
     n_marks = min(20, len(alphas))
     mark_idx = np.linspace(0, len(alphas) - 1, n_marks, dtype=int)
 
-    fig, ax = plt.subplots(figsize=(5, 5))
+    fig, ax = plt.subplots(figsize=(8, 8))
     ax.plot([0, 1], [0, 1], "k--", label="ideal")
     ax.plot(
         alphas,
