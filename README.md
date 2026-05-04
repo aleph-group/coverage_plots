@@ -7,42 +7,48 @@ inverse problems (e.g. PnP-ULA, DPS, diffusion posterior samplers, MCMC).
 ## What is a coverage plot?
 
 Given a stochastic posterior sampler that, for an observation $y$, returns
-samples $\{\hat{x}_s\}_{s=1}^{S}$ approximating $p(x \mid y)$, we want to
+samples $\\{\hat{x}_s\\}_{s=1}^{S}$ approximating $p(x \mid y)$, we want to
 check whether the *spread* of those samples is calibrated against the true
 $x$.
 
-The construction proceeds in three steps:
+The construction proceeds in three steps.
 
-1. **Posterior mean.** From the posterior samples we form
-
-$$
-\bar{x} = \frac{1}{S}\sum_{s=1}^{S} \hat{x}_s \;\;\approx\;\; \mathbb{E}[x \mid y].
-$$
-
-2. **Approximate credible balls.** For a confidence level
-   $\alpha \in [0, 1]$, we use the empirical $\alpha$-quantile of the
-   sample-to-mean distances,
+**1. Posterior mean.** From the posterior samples we form the Monte-Carlo
+estimate of the posterior mean,
 
 $$
-r_\alpha = Q_\alpha\!\left(\{\,\|\hat{x}_s - \bar{x}\|\,\}_{s=1}^{S}\right),
+\bar{x} = \frac{1}{S}\sum_{s=1}^{S} \hat{x}_s \approx \mathbb{E}[x \mid y].
 $$
 
-   to define a ball $B_\alpha(\bar{x}) = \{u : \|u - \bar{x}\| \le r_\alpha\}$
-   around the posterior mean. By construction this ball contains a fraction
-   $\alpha$ of the posterior samples, so it approximates a credible region of
-   posterior mass $\alpha$:
+**2. Approximate credible balls.** For a confidence level $\alpha \in [0, 1]$,
+let $r_\alpha$ be the empirical $\alpha$-quantile of the sample-to-mean
+distances,
 
 $$
-\Pr\!\left[x \in B_\alpha(\bar{x}) \,\big|\, y\right] \;\approx\; \alpha.
+r_\alpha = Q_\alpha\left(\\{\, \\| \hat{x}_s - \bar{x} \\| \,\\}_{s=1}^{S}\right),
 $$
 
-3. **Compare against the reference.** A well-calibrated posterior should
-   actually contain the true $x$ inside $B_\alpha(\bar{x})$ with probability
-   $\alpha$. We test this by repeating the construction over many
-   $(x, y)$ pairs and recording the empirical *coverage*
+and define the ball
 
 $$
-\widehat{\mathrm{cov}}(\alpha) \;=\; \frac{1}{N}\sum_{i=1}^{N} \mathbb{1}\!\left[\,x_i \in B_\alpha(\bar{x}_i)\,\right].
+B_\alpha(\bar{x}) = \\{\, u : \\| u - \bar{x} \\| \le r_\alpha \,\\}.
+$$
+
+By construction $B_\alpha(\bar{x})$ contains a fraction $\alpha$ of the
+posterior samples, so it approximates a credible region of posterior mass
+$\alpha$:
+
+$$
+\Pr\left[\, x \in B_\alpha(\bar{x}) \mid y \,\right] \approx \alpha.
+$$
+
+**3. Compare against the reference.** A well-calibrated posterior should
+actually contain the true $x$ inside $B_\alpha(\bar{x})$ with probability
+$\alpha$. We test this by repeating the construction over many $(x, y)$
+pairs and recording the empirical *coverage*,
+
+$$
+\widehat{\mathrm{cov}}(\alpha) = \frac{1}{N}\sum_{i=1}^{N} \mathbf{1}\left[\, x_i \in B_\alpha(\bar{x}_i) \,\right].
 $$
 
 Plotting $\widehat{\mathrm{cov}}(\alpha)$ against $\alpha$ gives the
@@ -58,7 +64,7 @@ $\widehat{\mathrm{cov}}(\alpha) = \alpha$:
 
 Coverage can be computed in pixel space or, optionally, in the latent space
 of an embedding $\phi$ (e.g. a VAE encoder), in which case the radii and
-the inclusion test are formed from $\|\phi(\cdot) - \phi(\bar{x})\|$.
+the inclusion test are formed from $\\| \phi(\cdot) - \phi(\bar{x}) \\|$.
 
 ## What's in the package
 
