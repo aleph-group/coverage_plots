@@ -63,7 +63,6 @@ ULA_SIGMA_DEN = NOISE_LEVEL
 ULA_THINNING = 5
 ULA_BURNIN = 0.1
 ULA_CLIP = (-1.0, 2.0)
-# Reference uses MC=1000 (=> max_iter ~ 5555); 600 keeps the example under ~3 min on CPU.
 ULA_KEPT_SAMPLES_TARGET = 1000  # post-burn-in, post-thinning samples we aim for
 NUM_ALPHAS = 200  # number of coverage levels evaluated in [0, 1]
 SEED = 0
