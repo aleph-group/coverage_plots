@@ -165,6 +165,15 @@ class Coverage:
         cov = self.sums / self.samples
         cov_meanemb = self.sums_meanemb / self.samples
 
+        # Endpoints are known analytically: a zero-radius ball covers nothing
+        # and a full-radius (alpha = 1) ball covers every reference.
+        if self.alphas[0] == 0.0:
+            cov[0] = 0.0
+            cov_meanemb[0] = 0.0
+        if self.alphas[-1] == 1.0:
+            cov[-1] = 1.0
+            cov_meanemb[-1] = 1.0
+
         if csv_path is not None:
             from pandas import DataFrame
 
