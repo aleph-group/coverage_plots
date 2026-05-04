@@ -25,13 +25,13 @@ let $r_\alpha$ be the empirical $\alpha$-quantile of the sample-to-mean
 distances,
 
 $$
-r_\alpha = Q_\alpha\left(\\{\, \\| \hat{x}_s - \bar{x} \\| \,\\}_{s=1}^{S}\right),
+r_\alpha = Q_\alpha\left(\\{ \\| \hat{x}_s - \bar{x} \\| \\}_{s=1}^{S}\right),
 $$
 
 and define the ball
 
 $$
-B_\alpha(\bar{x}) = \\{\, u : \\| u - \bar{x} \\| \le r_\alpha \,\\}.
+B_\alpha(\bar{x}) = \\{ u : \\| u - \bar{x} \\| \le r_\alpha \\}.
 $$
 
 By construction $B_\alpha(\bar{x})$ contains a fraction $\alpha$ of the
@@ -39,7 +39,7 @@ posterior samples, so it approximates a credible region of posterior mass
 $\alpha$:
 
 $$
-\Pr\left[\, x \in B_\alpha(\bar{x}) \mid y \,\right] \approx \alpha.
+\Pr\left[ x \in B_\alpha(\bar{x}) \mid y \right] \approx \alpha.
 $$
 
 **3. Compare against the reference.** A well-calibrated posterior should
@@ -48,7 +48,7 @@ $\alpha$. We test this by repeating the construction over many $(x, y)$
 pairs and recording the empirical *coverage*,
 
 $$
-\widehat{\mathrm{cov}}(\alpha) = \frac{1}{N}\sum_{i=1}^{N} \mathbf{1}\left[\, x_i \in B_\alpha(\bar{x}_i) \,\right].
+\widehat{\mathrm{cov}}(\alpha) = \frac{1}{N}\sum_{i=1}^{N} \mathbf{1}\left[ x_i \in B_\alpha(\bar{x}_i) \right].
 $$
 
 Plotting $\widehat{\mathrm{cov}}(\alpha)$ against $\alpha$ gives the
