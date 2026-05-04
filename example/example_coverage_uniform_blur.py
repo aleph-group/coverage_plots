@@ -66,7 +66,7 @@ ULA_KEPT_SAMPLES_TARGET = 1000  # post-burn-in, post-thinning samples we aim for
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VAE_WEIGHTS = REPO_ROOT / "models" / "MNIST_VAE.pth.tar"
 ORIGINAL_DATA_DIR = dinv.utils.get_data_home() / "datasets" / "MNIST"
-OUT_DIR = Path(__file__).resolve().parent / "outputs"
+OUT_DIR = Path(__file__).resolve().parent / "example_outputs"
 OUT_DIR.mkdir(exist_ok=True)
 
 
@@ -277,15 +277,13 @@ def main():
         print(f"Using MNIST VAE embedding from {args.vae_weights}")
         embedding = load_mnist_vae_embedding(args.vae_weights, device=DEVICE)
         suffix = "_vae"
-        title = "Coverage plot — MNIST uniform deblurring (PnP-ULA, VAE embedding)"
     else:
         embedding = None
         suffix = ""
-        title = "Coverage plot — MNIST uniform deblurring (PnP-ULA, pixel space)"
 
     coverage = Coverage(embedding=embedding, num_alphas=NUM_ALPHAS, device=DEVICE)
     coverage.update(x_samples, x_cpu)
-    alphas, cov, _ = coverage.compute(
+    alphas, cov, cov_emb = coverage.compute(
         csv_path=OUT_DIR / f"coverage_uniform{suffix}.csv"
     )
 
@@ -300,11 +298,20 @@ def main():
         marker="o",
         markevery=mark_idx.tolist(),
         markersize=4,
-        label="empirical",
+        label="pixel space",
     )
+    if cov_emb is not None:
+        ax.plot(
+            alphas,
+            cov_emb,
+            marker="s",
+            markevery=mark_idx.tolist(),
+            markersize=4,
+            label="VAE embedding",
+        )
     ax.set_xlabel(r"$\alpha$")
     ax.set_ylabel("coverage")
-    ax.set_title(title)
+    ax.set_title("Coverage plot — MNIST uniform deblurring (PnP-ULA)")
     ax.set_xlim(0.0, 1.0)
     ax.set_ylim(0.0, 1.0)
     ax.grid(True, linestyle=":", alpha=0.5)
