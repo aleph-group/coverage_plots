@@ -121,7 +121,6 @@ class Coverage:
             [self._to_features(x_samples[:, s]) for s in range(S)],
             axis=1,
         )  # shape (N, S, D)
-
         # Mean of embedded samples.
         x_mean_emb = x_samples_emb.mean(axis=1)
 
@@ -129,17 +128,19 @@ class Coverage:
         dist_meanemb = np.linalg.norm(x_emb - x_meanemb, axis=-1)
 
         dist_samples = np.linalg.norm(x_samples_emb - x_mean_emb[:, None, :], axis=-1)
-        dist_samples = np.sort(dist_samples, axis=1)
-
         dist_samples_meanemb = np.linalg.norm(
             x_samples_emb - x_meanemb[:, None, :], axis=-1
         )
-        dist_samples_meanemb = np.sort(dist_samples_meanemb, axis=1)
 
-        for i, alpha in enumerate(self.alphas):
-            idx = int(alpha * (S - 1))
-            self.sums[i] += np.sum(dist_mean <= dist_samples[:, idx])
-            self.sums_meanemb[i] += np.sum(dist_meanemb <= dist_samples_meanemb[:, idx])
+        # Per-reference empirical alpha-quantiles of the within-cluster
+        # distances (shape: (num_alphas, N)). Using np.quantile yields a
+        # linearly-interpolated estimate that is smoother and well-defined
+        # for any S, including the alpha = 0 / alpha = 1 endpoints.
+        quantiles = np.quantile(dist_samples, self.alphas, axis=1)
+        quantiles_meanemb = np.quantile(dist_samples_meanemb, self.alphas, axis=1)
+
+        self.sums += np.sum(dist_mean[None, :] <= quantiles, axis=1)
+        self.sums_meanemb += np.sum(dist_meanemb[None, :] <= quantiles_meanemb, axis=1)
 
         self.samples += N
 
