@@ -28,23 +28,18 @@ class Coverage:
     indicate over-confident posteriors, curves above indicate under-confident
     ones.
 
-    Two curves are tracked in parallel and both returned by :meth:`compute`:
-
-    * ``coverage`` uses the mean of the *features* of the samples,
-      :math:`\bar{\phi} = \tfrac{1}{S}\sum_s \phi(\hat{x}_s)`, as the center.
-    * ``coverage_meanemb`` uses the *feature of the pixel-space mean*,
-      :math:`\phi(\bar{x})`, as the center. The two coincide when ``embedding``
-      is ``None`` (pixel-space) or when :math:`\phi` is linear.
-
-    Distances are computed in feature space defined by the optional
-    ``embedding`` callable (e.g. an encoder). When ``embedding`` is ``None``,
-    samples are simply flattened and distances are Euclidean in pixel space.
+    The pixel-space (direct) coverage curve is *always* computed. When an
+    optional ``embedding`` callable :math:`\phi` is provided, an additional
+    embedding-space curve is computed in parallel using the *feature of the
+    pixel-space mean*, :math:`\phi(\bar{x})`, as the center; both curves are
+    returned by :meth:`compute`. The embedding-space curve is ``None`` when
+    no embedding is set.
 
     :param Callable embedding: optional callable mapping a batch tensor of
         shape ``(B, C, H, W)`` to a feature tensor of shape ``(B, D)``. The
         output may be a ``torch.Tensor`` (it is detached and moved to CPU) or
-        a ``numpy.ndarray``. If ``None``, the raw samples are flattened to
-        ``(B, C*H*W)`` and used as features.
+        a ``numpy.ndarray``. If ``None``, only the pixel-space curve is
+        computed.
     :param int num_alphas: number of evenly-spaced quantile levels in
         :math:`[0, 1]` at which the coverage curve is evaluated.
     :param torch.device device: device on which the embedding is expected to
@@ -60,7 +55,7 @@ class Coverage:
         >>> x = torch.randn(8, 1, 16, 16)              # references
         >>> x_samples = x.unsqueeze(1) + 0.1 * torch.randn(8, 32, 1, 16, 16)
         >>> cov.update(x_samples, x)
-        >>> alphas, coverage, coverage_meanemb = cov.compute()
+        >>> alphas, coverage, coverage_emb = cov.compute()  # coverage_emb is None
     """
 
     def __init__(self, embedding=None, num_alphas=100, device=None):
@@ -79,29 +74,33 @@ class Coverage:
         """
         self.alphas = np.linspace(0, 1, self.num_alphas)
         self.sums = np.zeros(self.num_alphas)
-        self.sums_meanemb = np.zeros(self.num_alphas)
+        self.sums_emb = (
+            np.zeros(self.num_alphas) if self.embedding is not None else None
+        )
         self.samples = 0
 
-    def _to_features(self, x):
-        """
-        Map a batch ``x`` of shape ``(B, C, H, W)`` to a feature array of
-        shape ``(B, D)`` as a numpy array, applying ``self.embedding`` if set,
-        otherwise just flattening the spatial/channel dimensions.
-        """
-        if self.embedding is not None:
-            return self.embedding(x).detach().cpu().numpy()
+    def _flatten(self, x):
+        """Flatten ``(B, C, H, W)`` -> ``(B, C*H*W)`` numpy array."""
         return x.detach().cpu().numpy().reshape((x.shape[0], -1))
+
+    def _embed(self, x):
+        """Apply ``self.embedding`` and return a ``(B, D)`` numpy array."""
+        return self.embedding(x).detach().cpu().numpy()
 
     def update(self, x_samples, x):
         r"""
         Accumulate coverage statistics for a new batch of references.
 
         For each of the ``N`` reference samples in ``x``, the corresponding
-        ``S`` posterior samples in ``x_samples`` are embedded, the empirical
-        :math:`\alpha`-quantile of within-cluster distances is computed for
-        every :math:`\alpha \in` ``self.alphas``, and the running coverage
-        counters are incremented whenever the reference falls inside that
-        radius. The batch size ``N`` is added to the internal sample counter.
+        ``S`` posterior samples in ``x_samples`` are used to compute the
+        empirical :math:`\alpha`-quantile of within-cluster distances at every
+        :math:`\alpha \in` ``self.alphas``, and the running coverage counters
+        are incremented whenever the reference falls inside that radius. The
+        batch size ``N`` is added to the internal sample counter.
+
+        Pixel-space distances are always computed. If ``self.embedding`` is
+        set, the same accounting is also performed in the embedding space,
+        using :math:`\phi(\bar{x})` as the center.
 
         :param torch.Tensor x_samples: posterior samples of shape
             ``(N, S, C, H, W)`` (``S`` samples per reference).
@@ -109,38 +108,33 @@ class Coverage:
         """
         N, S = x_samples.shape[0], x_samples.shape[1]
 
-        # Mean image across samples (in image space), then embed it.
-        x_mean_img = x_samples.mean(dim=1)
-        x_meanemb = self._to_features(x_mean_img)
-
-        # Embed the reference samples.
-        x_emb = self._to_features(x)
-
-        # Embed each sample (loop over the sample dimension).
-        x_samples_emb = np.stack(
-            [self._to_features(x_samples[:, s]) for s in range(S)],
-            axis=1,
-        )  # shape (N, S, D)
-        # Mean of embedded samples.
-        x_mean_emb = x_samples_emb.mean(axis=1)
-
-        dist_mean = np.linalg.norm(x_emb - x_mean_emb, axis=-1)
-        dist_meanemb = np.linalg.norm(x_emb - x_meanemb, axis=-1)
-
-        dist_samples = np.linalg.norm(x_samples_emb - x_mean_emb[:, None, :], axis=-1)
-        dist_samples_meanemb = np.linalg.norm(
-            x_samples_emb - x_meanemb[:, None, :], axis=-1
-        )
-
-        # Per-reference empirical alpha-quantiles of the within-cluster
-        # distances (shape: (num_alphas, N)). Using np.quantile yields a
-        # linearly-interpolated estimate that is smoother and well-defined
-        # for any S, including the alpha = 0 / alpha = 1 endpoints.
+        # --- Pixel-space (direct) coverage. ---
+        x_flat = self._flatten(x)
+        x_samples_flat = np.stack(
+            [self._flatten(x_samples[:, s]) for s in range(S)], axis=1
+        )  # (N, S, D)
+        center = x_samples_flat.mean(axis=1)
+        dist_ref = np.linalg.norm(x_flat - center, axis=-1)
+        dist_samples = np.linalg.norm(x_samples_flat - center[:, None, :], axis=-1)
+        # (num_alphas, N) — linearly-interpolated empirical alpha-quantiles
+        # per reference; well-defined for any S, including alpha=0/alpha=1.
         quantiles = np.quantile(dist_samples, self.alphas, axis=1)
-        quantiles_meanemb = np.quantile(dist_samples_meanemb, self.alphas, axis=1)
+        self.sums += np.sum(dist_ref[None, :] <= quantiles, axis=1)
 
-        self.sums += np.sum(dist_mean[None, :] <= quantiles, axis=1)
-        self.sums_meanemb += np.sum(dist_meanemb[None, :] <= quantiles_meanemb, axis=1)
+        # --- Optional embedding-space coverage. ---
+        if self.embedding is not None:
+            x_mean_img = x_samples.mean(dim=1)
+            x_meanemb = self._embed(x_mean_img)
+            x_emb = self._embed(x)
+            x_samples_emb = np.stack(
+                [self._embed(x_samples[:, s]) for s in range(S)], axis=1
+            )
+            dist_ref_e = np.linalg.norm(x_emb - x_meanemb, axis=-1)
+            dist_samples_e = np.linalg.norm(
+                x_samples_emb - x_meanemb[:, None, :], axis=-1
+            )
+            quantiles_e = np.quantile(dist_samples_e, self.alphas, axis=1)
+            self.sums_emb += np.sum(dist_ref_e[None, :] <= quantiles_e, axis=1)
 
         self.samples += N
 
@@ -149,41 +143,41 @@ class Coverage:
         Finalise and return the empirical coverage curves.
 
         Divides the accumulated counters by the total number of references
-        seen so far to produce two coverage curves over ``self.alphas``
-        (see the class docstring for the difference between them). If no
-        batches have been processed yet, the raw zero-valued counters are
-        returned unchanged.
+        seen so far to produce the pixel-space coverage curve over
+        ``self.alphas`` and, when ``self.embedding`` is set, an additional
+        embedding-space curve. If no batches have been processed yet, the raw
+        zero-valued counters are returned unchanged.
 
         :param str | os.PathLike csv_path: optional path to a CSV file where
             the curves are saved with columns ``alpha``, ``coverage`` and
-            ``coverage_meanemb``. Requires ``pandas`` to be installed.
-        :returns: tuple ``(alphas, coverage, coverage_meanemb)`` of
-            ``numpy.ndarray`` of shape ``(num_alphas,)``.
+            (when an embedding is set) ``coverage_emb``. Requires ``pandas``.
+        :returns: tuple ``(alphas, coverage, coverage_emb)`` of
+            ``numpy.ndarray`` of shape ``(num_alphas,)``. ``coverage_emb`` is
+            ``None`` when no embedding was provided.
         """
         if self.samples == 0:
-            return self.alphas, self.sums, self.sums_meanemb
+            return self.alphas, self.sums, self.sums_emb
 
         cov = self.sums / self.samples
-        cov_meanemb = self.sums_meanemb / self.samples
+        cov_emb = self.sums_emb / self.samples if self.sums_emb is not None else None
 
         # Endpoints are known analytically: a zero-radius ball covers nothing
         # and a full-radius (alpha = 1) ball covers every reference.
         if self.alphas[0] == 0.0:
             cov[0] = 0.0
-            cov_meanemb[0] = 0.0
+            if cov_emb is not None:
+                cov_emb[0] = 0.0
         if self.alphas[-1] == 1.0:
             cov[-1] = 1.0
-            cov_meanemb[-1] = 1.0
+            if cov_emb is not None:
+                cov_emb[-1] = 1.0
 
         if csv_path is not None:
             from pandas import DataFrame
 
-            DataFrame(
-                {
-                    "alpha": self.alphas,
-                    "coverage": cov,
-                    "coverage_meanemb": cov_meanemb,
-                }
-            ).to_csv(csv_path, index=False)
+            data = {"alpha": self.alphas, "coverage": cov}
+            if cov_emb is not None:
+                data["coverage_emb"] = cov_emb
+            DataFrame(data).to_csv(csv_path, index=False)
 
-        return self.alphas, cov, cov_meanemb
+        return self.alphas, cov, cov_emb
