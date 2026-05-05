@@ -7,7 +7,7 @@ inverse problems (e.g. PnP-ULA, DPS, diffusion posterior samplers, MCMC).
 ## What is a coverage plot?
 
 Given a stochastic posterior sampler that, for an observation $y$, returns
-samples $\lbrace \hat{x}_s \rbrace_{s=1}^{S}$ approximating $p(x \mid y)$, we want to
+samples $\hat{x}_1, \dots, \hat{x}_S$, $\{ \hat{x}\}$ approximating $p(x \mid y)$, we want to
 check whether the *spread* of those samples is calibrated against the true
 $x$.
 
