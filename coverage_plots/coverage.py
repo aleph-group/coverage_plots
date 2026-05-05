@@ -40,6 +40,13 @@ class Coverage:
         output may be a ``torch.Tensor`` (it is detached and moved to CPU) or
         a ``numpy.ndarray``. If ``None``, only the pixel-space curve is
         computed.
+    :param Callable distance: callable ``distance(a, b) -> (B,)`` that takes
+        two numpy arrays of identical shape ``(B, D)`` (with ``B`` the batch
+        of pairs and ``D`` the feature dimension) and returns the per-pair
+        distance as a 1-D array of length ``B``. Defaults to the Euclidean
+        (L2) norm of ``a - b`` along the last axis. The same distance is
+        used for both the pixel-space and (when set) the embedding-space
+        coverage.
     :param int num_alphas: number of evenly-spaced quantile levels in
         :math:`[0, 1]` at which the coverage curve is evaluated.
     :param torch.device device: device on which the embedding is expected to
@@ -58,8 +65,9 @@ class Coverage:
         >>> alphas, coverage, coverage_emb = cov.compute()  # coverage_emb is None
     """
 
-    def __init__(self, embedding=None, num_alphas=100, device=None):
+    def __init__(self, embedding=None, distance=None, num_alphas=100, device=None):
         self.embedding = embedding
+        self.distance = distance if distance is not None else self._l2_distance
         self.device = device
         self.num_alphas = num_alphas
         self.reset()
@@ -86,6 +94,25 @@ class Coverage:
     def _embed(self, x):
         """Apply ``self.embedding`` and return a ``(B, D)`` numpy array."""
         return self.embedding(x).detach().cpu().numpy()
+
+    @staticmethod
+    def _l2_distance(a, b):
+        """Default distance: Euclidean norm of ``a - b`` along the last axis."""
+        return np.linalg.norm(a - b, axis=-1)
+
+    def _pairwise(self, samples, center):
+        """
+        Apply ``self.distance`` between every sample and the corresponding
+        center.
+
+        :param samples: array of shape ``(N, S, D)``.
+        :param center: array of shape ``(N, D)``.
+        :returns: array of shape ``(N, S)`` of distances.
+        """
+        N, S, D = samples.shape
+        a = samples.reshape(N * S, D)
+        b = np.broadcast_to(center[:, None, :], (N, S, D)).reshape(N * S, D)
+        return np.asarray(self.distance(a, b)).reshape(N, S)
 
     def update(self, x_samples, x):
         r"""
@@ -114,8 +141,8 @@ class Coverage:
             [self._flatten(x_samples[:, s]) for s in range(S)], axis=1
         )  # (N, S, D)
         center = x_samples_flat.mean(axis=1)
-        dist_ref = np.linalg.norm(x_flat - center, axis=-1)
-        dist_samples = np.linalg.norm(x_samples_flat - center[:, None, :], axis=-1)
+        dist_ref = np.asarray(self.distance(x_flat, center))
+        dist_samples = self._pairwise(x_samples_flat, center)
         # (num_alphas, N) — linearly-interpolated empirical alpha-quantiles
         # per reference; well-defined for any S, including alpha=0/alpha=1.
         quantiles = np.quantile(dist_samples, self.alphas, axis=1)
@@ -129,10 +156,8 @@ class Coverage:
             x_samples_emb = np.stack(
                 [self._embed(x_samples[:, s]) for s in range(S)], axis=1
             )
-            dist_ref_e = np.linalg.norm(x_emb - x_meanemb, axis=-1)
-            dist_samples_e = np.linalg.norm(
-                x_samples_emb - x_meanemb[:, None, :], axis=-1
-            )
+            dist_ref_e = np.asarray(self.distance(x_emb, x_meanemb))
+            dist_samples_e = self._pairwise(x_samples_emb, x_meanemb)
             quantiles_e = np.quantile(dist_samples_e, self.alphas, axis=1)
             self.sums_emb += np.sum(dist_ref_e[None, :] <= quantiles_e, axis=1)
 
