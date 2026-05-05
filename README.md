@@ -7,7 +7,7 @@ inverse problems (e.g. PnP-ULA, DPS, diffusion posterior samplers, MCMC).
 ## What is a coverage plot?
 
 Given a stochastic posterior sampler that, for an observation $y$, returns
-samples $\\{\hat{x}_s\\}_{s=1}^{S}$ approximating $p(x \mid y)$, we want to
+samples $\lbrace \hat{x}_s \rbrace_{s=1}^{S}$ approximating $p(x \mid y)$, we want to
 check whether the *spread* of those samples is calibrated against the true
 $x$.
 
@@ -25,13 +25,13 @@ let $r_\alpha$ be the empirical $\alpha$-quantile of the sample-to-mean
 distances,
 
 $$
-r_\alpha = Q_\alpha\left(\\{ \\| \hat{x}_s - \bar{x} \\| \\}_{s=1}^{S}\right),
+r_\alpha = Q_\alpha\left(\lbrace \lVert \hat{x}_s - \bar{x} \rVert \rbrace_{s=1}^{S}\right),
 $$
 
 and define the ball
 
 $$
-B_\alpha(\bar{x}) = \\{ u : \\| u - \bar{x} \\| \le r_\alpha \\}.
+B_\alpha(\bar{x}) = \lbrace u : \lVert u - \bar{x} \rVert \le r_\alpha \rbrace.
 $$
 
 By construction $B_\alpha(\bar{x})$ contains a fraction $\alpha$ of the
@@ -64,7 +64,7 @@ $\widehat{\mathrm{cov}}(\alpha) = \alpha$:
 
 Coverage can be computed in pixel space or, optionally, in the latent space
 of an embedding $\phi$ (e.g. a VAE encoder), in which case the radii and
-the inclusion test are formed from $\\| \phi(\cdot) - \phi(\bar{x}) \\|$.
+the inclusion test are formed from $\lVert \phi(\cdot) - \phi(\bar{x}) \rVert$.
 
 ## What's in the package
 
