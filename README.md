@@ -66,6 +66,32 @@ Coverage can be computed in pixel space or, optionally, in the latent space
 of an embedding $\phi$ (e.g. a VAE encoder), in which case the radii and
 the inclusion test are formed from $\lVert \phi(\cdot) - \phi(\bar{x}) \rVert$.
 
+## TARP coverage
+
+The package also implements the **TARP** diagnostic of
+[Lemos, Coogan et al. 2023](https://arxiv.org/abs/2302.03026), a global
+coverage test that does not assume the posterior is unimodal or centred on
+its mean. For each reference $x_n$ a uniform reference point
+$\theta^\star_n$ is drawn over the bounding box of the references, and a
+per-reference credibility value
+
+$$
+f_n = \frac{1}{S}\sum_{s=1}^{S} \mathbf{1}\bigl[ d(\theta^\star_n, \hat{x}_{n,s}) < d(\theta^\star_n, x_n) \bigr]
+$$
+
+is computed. The expected coverage probability is the empirical CDF of
+$\lbrace f_n \rbrace$ evaluated on a fixed grid in $[0, 1]$:
+
+$$
+\mathrm{ecp}(\alpha) = \frac{1}{N}\sum_{n=1}^{N} \mathbf{1}\bigl[ f_n \le \alpha \bigr].
+$$
+
+A well-calibrated sampler again follows the diagonal
+$\mathrm{ecp}(\alpha) = \alpha$. Same reading rules as for the coverage
+curve: below-diagonal → over-confident, above-diagonal → under-confident.
+Like `Coverage`, TARP supports an optional `embedding` callable and a
+pluggable `distance` (default L2).
+
 ## What's in the package
 
 - [`coverage_plots.Coverage`](coverage_plots/coverage.py) — the public class.
@@ -73,13 +99,16 @@ the inclusion test are formed from $\lVert \phi(\cdot) - \phi(\bar{x}) \rVert$.
   `update(x_samples, x)` and returns the curve via `compute()`.
   Pixel-space coverage is always computed; an extra embedding-space curve is
   computed in parallel when an `embedding` callable is supplied.
+- [`coverage_plots.run_tarp`](coverage_plots/tarp.py) — stateless function
+  implementing the TARP diagnostic. Takes the same `(x_samples, x)` shape
+  contract as `Coverage` and returns `(alpha, ecp)` arrays ready to plot.
 - [`coverage_plots.load_mnist_vae_embedding`](coverage_plots/vae.py) —
   factory that loads a small pre-trained MNIST VAE encoder and returns it as
   an embedding callable suitable for `Coverage(embedding=...)`.
 - [example/example_coverage_uniform_blur.py](example/example_coverage_uniform_blur.py)
   — runnable end-to-end example: MNIST uniform-deblurring solved with
-  PnP-ULA (`deepinv`), then a coverage curve plotted to `example/outputs/`.
-  Pass `--use-vae` to overlay the VAE-embedding coverage curve.
+  PnP-ULA (`deepinv`), then both a coverage curve and a TARP curve plotted
+  to `example/outputs/`. Pass `--use-vae` to overlay VAE-embedding curves.
 
 ## Install & run
 
@@ -101,6 +130,15 @@ cov = Coverage(num_alphas=200)            # pixel-space only
 cov.update(x_samples, x)
 alphas, coverage, coverage_emb = cov.compute(csv_path="coverage.csv")
 # coverage_emb is None unless an embedding callable was passed at construction
+```
+
+TARP variant:
+
+```python
+from coverage_plots import run_tarp
+
+alpha, ecp = run_tarp(x_samples, x)        # pixel-space TARP
+# alpha, ecp = run_tarp(x_samples, x, embedding=phi)   # in embedding space
 ```
 
 Tensor-shape contract: references are `(N, C, H, W)` and posterior samples
