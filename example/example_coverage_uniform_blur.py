@@ -40,7 +40,7 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
-from coverage_plots import Coverage, load_mnist_vae_embedding
+from coverage_plots import Coverage, load_mnist_vae_embedding, run_tarp
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -55,6 +55,8 @@ NOISE_LEVEL = 0.02  # measurement noise std (matches reference)
 KERNEL_SIZE = 5  # uniform PSF support (matches reference)
 NUM_ALPHAS = 200  # number of coverage levels evaluated in [0, 1]
 SEED = 0
+# TARP parameters
+TARP_NUM_BINS = 8  # number of bins for TARP histogram (defaults to max(N//10, 2))
 # ULA hyperparameters (matches reference; reduced max_iter for CPU runtime).
 ULA_ALPHA = 2.0
 ULA_SIGMA_DEN = NOISE_LEVEL
@@ -66,7 +68,7 @@ ULA_KEPT_SAMPLES_TARGET = 1000  # post-burn-in, post-thinning samples we aim for
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VAE_WEIGHTS = REPO_ROOT / "models" / "MNIST_VAE.pth.tar"
 ORIGINAL_DATA_DIR = dinv.utils.get_data_home() / "datasets" / "MNIST"
-OUT_DIR = Path(__file__).resolve().parent / "example_outputs"
+OUT_DIR = Path(__file__).resolve().parent / "outputs"  # "example_outputs"
 OUT_DIR.mkdir(exist_ok=True)
 
 
@@ -321,6 +323,49 @@ def main():
     out_pdf = OUT_DIR / f"coverage_uniform{suffix}.pdf"
     fig.savefig(out_pdf)
     print(f"saved {out_pdf}")
+
+    # -------------------------------------------------------------------------
+    # TARP coverage diagnostic (Lemos et al. 2023, arXiv:2302.03026).
+    # -------------------------------------------------------------------------
+    rng = np.random.default_rng(SEED)
+    tarp_alpha, tarp_ecp = run_tarp(
+        x_samples,
+        x_cpu,
+        embedding=None,
+        num_bins=TARP_NUM_BINS,
+        rng=rng,
+    )
+    if embedding is not None:
+        _, tarp_ecp_emb = run_tarp(
+            x_samples,
+            x_cpu,
+            embedding=embedding,
+            num_bins=TARP_NUM_BINS,
+            rng=rng,
+        )
+    else:
+        tarp_ecp_emb = None
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.plot([0, 1], [0, 1], "k--", label="ideal")
+    ax.plot(tarp_alpha, tarp_ecp, marker="o", markersize=4, label="pixel space")
+    if tarp_ecp_emb is not None:
+        ax.plot(
+            tarp_alpha, tarp_ecp_emb, marker="s", markersize=4, label="VAE embedding"
+        )
+    ax.set_xlabel(r"credibility level $\alpha$")
+    ax.set_ylabel("expected coverage probability")
+    ax.set_title("TARP coverage — MNIST uniform deblurring (PnP-ULA)")
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.0)
+    ax.grid(True, linestyle=":", alpha=0.5)
+    ax.legend()
+    ax.set_aspect("equal")
+    fig.tight_layout()
+    out_tarp = OUT_DIR / f"tarp_uniform{suffix}.pdf"
+    fig.savefig(out_tarp)
+    plt.close(fig)
+    print(f"saved {out_tarp}")
 
 
 if __name__ == "__main__":
