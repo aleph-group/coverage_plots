@@ -13,15 +13,28 @@ class Coverage:
 
     .. math::
 
-        \bar{x} = \frac{1}{S}\sum_{s=1}^{S} \hat{x}_s,
+        c = \bar{x} = \frac{1}{S}\sum_{s=1}^{S} \hat{x}_s,
         \qquad
-        r_\alpha = Q_\alpha\bigl(\{\|\hat{x}_s - \bar{x}\|\}_{s=1}^{S}\bigr),
+        r_\alpha = Q_\alpha\bigl(\{\|\hat{x}_s - c\|\}_{s=1}^{S}\bigr),
 
     where :math:`Q_\alpha` is the empirical :math:`\alpha`-quantile. The
     reference :math:`x` is *covered* at level :math:`\alpha` whenever
-    :math:`\|x - \bar{x}\| \le r_\alpha`. The empirical coverage is the
+    :math:`\|x - c\| \le r_\alpha`. The empirical coverage is the
     fraction of references for which this holds, accumulated across all
     batches passed to :meth:`update`.
+
+    **Choosing the center.** :math:`c` defaults to the posterior mean
+    :math:`\bar{x}`, which is the right choice when the samples are draws from
+    a posterior and you are asking whether that posterior is calibrated.
+    :meth:`update` accepts an explicit ``center`` for the case where they are
+    not: if the samples come from a bootstrap around a point estimate
+    :math:`\hat{x}` -- each one a reconstruction of re-measured data -- then
+    :math:`\bar{x}` is :math:`\hat{x}` plus the reconstructor's bias on its own
+    output, an offset that does not shrink with :math:`S`. Centering on
+    :math:`\bar{x}` then measures coverage around a point that is never
+    reported, and it flatters the method, since the cloud is centered on its
+    own mean by construction. Pass ``center=x_hat`` to ask the question that
+    matches what is published.
 
     A well-calibrated posterior produces a coverage curve close to the diagonal
     :math:`\mathrm{coverage}(\alpha) = \alpha`; curves below the diagonal
@@ -114,7 +127,52 @@ class Coverage:
         b = np.broadcast_to(center[:, None, :], (N, S, D)).reshape(N * S, D)
         return np.asarray(self.distance(a, b)).reshape(N, S)
 
-    def update(self, x_samples, x):
+    def _resolve_center(self, x_samples, x_samples_flat, center):
+        """
+        Pick the center of the credible ball, as an ``(N, D)`` array.
+
+        ``None`` gives the posterior mean :math:`\\bar{x}`, which is the
+        default and what every earlier version did unconditionally.
+
+        Anything else is used verbatim, which is what you want when the ball
+        should be centered on the estimate you actually report. For an
+        iterative or learned reconstructor the sample mean is **not** that
+        estimate: the samples are reconstructions of re-measured data, so
+        :math:`\\bar{x}` sits at :math:`\\hat{x}` plus the reconstructor's bias
+        on its own output, and that offset does not vanish with more samples.
+        Measuring coverage around :math:`\\bar{x}` then asks whether the truth
+        is near a point nobody publishes, and it flatters the method, because
+        the sample cloud is centered on its own mean by construction.
+
+        :param x_samples: the original ``(N, S, C, H, W)`` tensor, for shape
+            reporting only.
+        :param x_samples_flat: ``(N, S, D)`` flattened samples.
+        :param center: ``None``, or a tensor/array broadcastable to the
+            reference shape ``(N, C, H, W)`` or already flat ``(N, D)``.
+        :returns: ``(N, D)`` array.
+        :raises ValueError: if ``center`` does not have ``N`` rows or ``D``
+            columns once flattened.
+        """
+        N, _, D = x_samples_flat.shape
+        if center is None:
+            return x_samples_flat.mean(axis=1)
+
+        if hasattr(center, "detach"):
+            center = self._flatten(center) if center.ndim > 2 else (
+                center.detach().cpu().numpy()
+            )
+        center = np.asarray(center)
+        center = center.reshape((center.shape[0], -1))
+
+        if center.shape != (N, D):
+            raise ValueError(
+                f"center has shape {center.shape} after flattening but the "
+                f"samples are {tuple(x_samples.shape)}, which needs ({N}, {D}). "
+                "Pass one center per reference, shaped like the reference."
+            )
+        return center
+
+    def update(self, x_samples, x, center=None):
         r"""
         Accumulate coverage statistics for a new batch of references.
 
@@ -127,11 +185,18 @@ class Coverage:
 
         Pixel-space distances are always computed. If ``self.embedding`` is
         set, the same accounting is also performed in the embedding space,
-        using :math:`\phi(\bar{x})` as the center.
+        using the embedded center as the center.
 
         :param torch.Tensor x_samples: posterior samples of shape
             ``(N, S, C, H, W)`` (``S`` samples per reference).
         :param torch.Tensor x: reference samples of shape ``(N, C, H, W)``.
+        :param center: optional center of the ball, one per reference, shaped
+            like ``x`` (or already flat, ``(N, D)``). ``None`` -- the default --
+            uses the posterior mean :math:`\bar{x}` and reproduces the
+            behaviour of every earlier version. Pass the reported estimate
+            :math:`\hat{x}` when the question is whether the truth lies near
+            *what you publish* rather than near the center of the sample cloud;
+            see :meth:`_resolve_center` for why those differ.
         """
         N, S = x_samples.shape[0], x_samples.shape[1]
 
@@ -140,7 +205,8 @@ class Coverage:
         x_samples_flat = np.stack(
             [self._flatten(x_samples[:, s]) for s in range(S)], axis=1
         )  # (N, S, D)
-        center = x_samples_flat.mean(axis=1)
+        center_img = center
+        center = self._resolve_center(x_samples, x_samples_flat, center)
         dist_ref = np.asarray(self.distance(x_flat, center))
         dist_samples = self._pairwise(x_samples_flat, center)
         # (num_alphas, N) — linearly-interpolated empirical alpha-quantiles
@@ -150,8 +216,22 @@ class Coverage:
 
         # --- Optional embedding-space coverage. ---
         if self.embedding is not None:
-            x_mean_img = x_samples.mean(dim=1)
-            x_meanemb = self._embed(x_mean_img)
+            # The embedding is a map on IMAGES, so the center has to be
+            # embedded as an image rather than reused from the flat pixel-space
+            # center -- phi(xbar) is not the mean of phi(x_s). When a center was
+            # supplied it must therefore arrive in image form; a caller who
+            # passed a pre-flattened (N, D) center has nothing to embed.
+            if center_img is None:
+                x_center_img = x_samples.mean(dim=1)
+            elif hasattr(center_img, "ndim") and center_img.ndim == x.ndim:
+                x_center_img = center_img
+            else:
+                raise ValueError(
+                    "embedding-space coverage needs `center` shaped like `x` "
+                    f"({tuple(x.shape)}) so it can be embedded; got "
+                    f"{tuple(np.shape(center_img))}."
+                )
+            x_meanemb = self._embed(x_center_img)
             x_emb = self._embed(x)
             x_samples_emb = np.stack(
                 [self._embed(x_samples[:, s]) for s in range(S)], axis=1

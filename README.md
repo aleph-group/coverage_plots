@@ -64,7 +64,41 @@ $\widehat{\mathrm{cov}}(\alpha) = \alpha$:
 
 Coverage can be computed in pixel space or, optionally, in the latent space
 of an embedding $\phi$ (e.g. a VAE encoder), in which case the radii and
-the inclusion test are formed from $\lVert \phi(\cdot) - \phi(\bar{x}) \rVert$.
+the inclusion test are formed from $\lVert \phi(\cdot) - \phi(c) \rVert$.
+
+### Choosing the centre
+
+The ball is centred on $c$, which defaults to the posterior mean $\bar{x}$.
+That is the right choice when `x_samples` really are draws from a posterior
+and the question is whether that posterior is calibrated.
+
+It is the wrong choice when the samples are a **bootstrap around a point
+estimate** $\hat{x}$ — each one a reconstruction of re-measured data. Then
+
+$$\bar{x} \;=\; \hat{x} + \text{(the reconstructor's bias on its own output)},$$
+
+an offset that does **not** shrink as $S$ grows. Centring on $\bar{x}$ asks
+whether the truth lies near a point that is never reported.
+
+Note this is not a uniformly stricter or looser test — which centre gives
+higher coverage depends on where the truth sits relative to both, and on
+whether the offset inflates the radius (it enters
+$\lVert \hat{x}_s - \hat{x} \rVert$) or the distance (it enters
+$\lVert x - \bar{x} \rVert$). The two answer different questions; pick the
+one that matches the estimate you report.
+
+Pass the estimate explicitly to ask the question that matches what you
+publish:
+
+```python
+cov.update(x_samples, x, center=x_hat)     # one centre per reference
+```
+
+`center` takes a tensor or array shaped like `x`, i.e. `(N, C, H, W)`, or an
+already-flattened `(N, D)`. The flat form cannot be used together with an
+`embedding`, since the embedding is a map on images and $\phi(\bar{x})$ is
+not the mean of $\phi(\hat{x}_s)$; pass the image form in that case. Omitting
+`center` reproduces the behaviour of every earlier version exactly.
 
 ## TARP coverage
 
@@ -127,9 +161,15 @@ from coverage_plots import Coverage
 cov = Coverage(num_alphas=200)            # pixel-space only
 # x:         (N, C, H, W)  ground-truth references
 # x_samples: (N, S, C, H, W)  S posterior samples per reference
-cov.update(x_samples, x)
+cov.update(x_samples, x)                  # ball centred on the sample mean
 alphas, coverage, coverage_emb = cov.compute(csv_path="coverage.csv")
 # coverage_emb is None unless an embedding callable was passed at construction
+```
+
+Centred on a reported estimate instead (see *Choosing the centre*):
+
+```python
+cov.update(x_samples, x, center=x_hat)    # x_hat: (N, C, H, W)
 ```
 
 TARP variant:
